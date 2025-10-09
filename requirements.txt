@@ -2,11 +2,9 @@
 torch
 transformers
 accelerate
-bitsandbytes
 sentence-transformers
 scikit-learn
 huggingface-hub
-stix2
 
 # Data processing
 numpy
