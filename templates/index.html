@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MITRE ATT&CK Threat Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ MITRE ATT&CK Threat Analyzer</h1>
+            <p class="subtitle">AI-Powered Threat Intelligence Analysis & Remediation</p>
+        </header>
+
+        <div class="input-card">
+            <label for="threatReport">Threat Intelligence Report</label>
+            <textarea
+                id="threatReport"
+                placeholder="Paste your threat intelligence report, incident description, or malware behavior here...&#10;&#10;Example: 'The adversary deployed ransomware that encrypted all files and demanded payment in cryptocurrency...'">i have ransomware</textarea>
+            
+            <div class="button-group">
+                <button class="analyze-btn" onclick="analyzeThreat()">
+                    🔍 Analyze Threat
+                </button>
+                <button class="clear-btn" onclick="clearAll()">
+                    🗑️ Clear
+                </button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="color: #666; font-size: 16px;">Analyzing threat report with AI...</p>
+            <p style="color: #999; font-size: 14px; margin-top: 10px;">This may take 30-60 seconds</p>
+        </div>
+
+        <div class="results" id="results">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">📋</span>
+                    <h2 class="card-title">Threat Summary</h2>
+                </div>
+                <div class="summary-text" id="summary"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">🎯</span>
+                    <h2 class="card-title">MITRE ATT&CK Mappings</h2>
+                </div>
+                <div id="ttpMappings"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">🏢</span>
+                    <h2 class="card-title">For Organizations</h2>
+                </div>
+                <div id="orgMitigations"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">👤</span>
+                    <h2 class="card-title">Immediate Actions for Individuals</h2>
+                </div>
+                <div id="individualActions"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Your JavaScript code remains the same
+        const API_URL = 'http://localhost:5000/api';
+
+        async function analyzeThreat() {
+            const report = document.getElementById('threatReport').value;
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const analyzeBtn = document.querySelector('.analyze-btn');
+
+            if (!report.trim()) {
+                alert('Please enter a threat report to analyze');
+                return;
+            }
+
+            // Show loading, hide results
+            loading.classList.add('show');
+            results.classList.remove('show');
+            analyzeBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ report: report })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Analysis failed');
+                }
+
+                // Display results
+                displayResults(result.data);
+                
+                loading.classList.remove('show');
+                results.classList.add('show');
+
+            } catch (error) {
+                loading.classList.remove('show');
+                // Create a placeholder for the results content before setting innerHTML
+                const resultsContainer = document.getElementById('results');
+                resultsContainer.innerHTML = `
+                    <div class="error">
+                        <strong>⚠️ Error:</strong> ${error.message}
+                        <br><br>
+                        Make sure the Flask backend is running on http://localhost:5000
+                    </div>
+                `;
+                resultsContainer.classList.add('show');
+            } finally {
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        function displayResults(data) {
+            // Display summary
+            document.getElementById('summary').innerHTML = data.summary.replace(/\n/g, '<br>');
+
+            // Display TTP mappings
+            const ttpContainer = document.getElementById('ttpMappings');
+            ttpContainer.innerHTML = '';
+            
+            data.mappings.forEach((mapping, index) => {
+                const confidence = (mapping.confidence * 100).toFixed(0);
+                const confidenceClass = mapping.confidence >= 0.8 ? 'ttp-confidence' : 'ttp-confidence' ;
+                
+                ttpContainer.innerHTML += `
+                    <div class="ttp-item">
+                        <div class="ttp-header">
+                            <span class="ttp-tactic">${mapping.tactic}</span>
+                            <span class="${confidenceClass}">${confidence}% Confidence</span>
+                        </div>
+                        <div class="ttp-technique">${mapping.technique}</div>
+                        ${mapping.sub_technique ? `<div class="ttp-technique" style="font-size: 14px; color: #666;">└─ ${mapping.sub_technique}</div>` : ''}
+                        <div class="ttp-procedure"><strong>Procedure:</strong> ${mapping.procedure}</div>
+                        ${mapping.text ? `<div class="ttp-evidence"><strong>Evidence:</strong> "${mapping.text}"</div>` : ''}
+                        ${mapping.threat_actors && mapping.threat_actors.length > 0 ? 
+                            `<div style="margin-top: 10px; color: #666; font-size: 13px;">
+                                <strong>Threat Actors:</strong> ${mapping.threat_actors.join(', ')}
+                            </div>` : ''}
+                    </div>
+                `;
+            });
+
+            // Display organization mitigations
+            const orgContainer = document.getElementById('orgMitigations');
+            orgContainer.innerHTML = '';
+            
+            if (data.action_plan.for_organizations.length > 0) {
+                data.action_plan.for_organizations.forEach(mitigation => {
+                    orgContainer.innerHTML += `
+                        <div class="mitigation-item">
+                            <div class="mitigation-header">[${mitigation.attack_id}] ${mitigation.mitigation}</div>
+                            <div class="mitigation-desc">${mitigation.description}</div>
+                        </div>
+                    `;
+                });
+            } else {
+                orgContainer.innerHTML = '<p style="color: #999;">No specific mitigations available.</p>';
+            }
+
+            // Display individual actions
+            const individualContainer = document.getElementById('individualActions');
+            individualContainer.innerHTML = '';
+            
+            data.action_plan.for_individuals.forEach((action, index) => {
+                individualContainer.innerHTML += `
+                    <div class="checklist-item">
+                        <div class="checklist-number">${index + 1}</div>
+                        <div class="checklist-text">${action}</div>
+                    </div>
+                `;
+            });
+        }
+
+        function clearAll() {
+            document.getElementById('threatReport').value = '';
+            document.getElementById('results').classList.remove('show');
+        }
+
+        // Allow Ctrl+Enter to submit
+        document.getElementById('threatReport').addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                analyzeThreat();
+            }
+        });
+    </script>
+</body>
+</html>
