@@ -11,5 +11,9 @@ MITREMapper is an intelligent threat analysis platform designed to automate the 
 
 Note: If you have an NVIDIA GPU use: `pip install torch --index-url https://download.pytorch.org/whl/cu118` to install Pytorch with CUDA support, and then continue from `pip install -r requirements.txt`
 
+To update the MITRE ATT&amp;CK matrices, run:
+- `python update.py --all` = Update all matrices.
+- `python update.py --matrix [enterprise,mobile,ics]` = Updates one specified matrix.
+
 ## Hardware Requirements
 To run this locally, your system should atleast have 4GBs of VRAM and 16GBs of RAM.
