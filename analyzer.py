@@ -1,4 +1,3 @@
-# Cell 1: Imports
 import json
 import re
 from typing import List, Dict, Any, Optional, Tuple
@@ -9,6 +8,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 # Cell 2: Dataclass Definitions
@@ -134,10 +134,12 @@ class MITREKnowledgeBase:
     
     def _build_mitigation_lookup(self) -> Dict[str, List[Dict]]:
         """Build technique ID -> mitigations lookup"""
-        # First, get all mitigations
         mitigations = {}
+        target_to_ext_id = {}
+        
         for matrix in [self.enterprise, self.ics, self.mobile]:
             for obj in matrix.get("objects", []):
+                # Cache mitigations
                 if obj.get("type") == "course-of-action":
                     mit_id = None
                     for ref in obj.get("external_references", []):
@@ -151,55 +153,37 @@ class MITREKnowledgeBase:
                             "name": obj.get("name"),
                             "description": obj.get("description", "")
                         }
-        
-        # Build technique -> mitigations mapping
+                
+                # Cache technique patterns for O(1) mitigation relationship mapping
+                elif obj.get("type") == "attack-pattern":
+                    tech_ext_id = None
+                    for ref in obj.get("external_references", []):
+                        if ref.get("source_name") == "mitre-attack":
+                            tech_ext_id = ref.get("external_id")
+                            break
+                    if tech_ext_id:
+                        target_to_ext_id[obj["id"]] = tech_ext_id
+                        
+        # Build technique -> mitigations mapping using fast lookup
         lookup = {}
         for matrix in [self.enterprise, self.ics, self.mobile]:
             for obj in matrix.get("objects", []):
                 if obj.get("type") == "relationship" and obj.get("relationship_type") == "mitigates":
-                    # Find the technique ID
                     target_id = obj.get("target_ref")
                     source_id = obj.get("source_ref")
                     
-                    if source_id in mitigations:
-                        # Find technique external ID
-                        for tech_obj in matrix.get("objects", []):
-                            if tech_obj.get("id") == target_id and tech_obj.get("type") == "attack-pattern":
-                                tech_ext_id = None
-                                for ref in tech_obj.get("external_references", []):
-                                    if ref.get("source_name") == "mitre-attack":
-                                        tech_ext_id = ref.get("external_id")
-                                        break
-                                
-                                if tech_ext_id:
-                                    if tech_ext_id not in lookup:
-                                        lookup[tech_ext_id] = []
-                                    lookup[tech_ext_id].append(mitigations[source_id])
+                    if source_id in mitigations and target_id in target_to_ext_id:
+                        tech_ext_id = target_to_ext_id[target_id]
+                        if tech_ext_id not in lookup:
+                            lookup[tech_ext_id] = []
+                        lookup[tech_ext_id].append(mitigations[source_id])
         
         return lookup
     
     def get_similar_mappings(self, text: str, top_k: int = 3) -> List[Dict]:
-        """Retrieve similar historical mappings for few-shot examples"""
-        if not self.historical_mappings:
-            return []
-        
-        # Simple keyword-based similarity (can be improved with embeddings)
-        text_lower = text.lower()
-        scored_mappings = []
-        
-        for mapping in self.historical_mappings:
-            mapping_text = mapping.get("text", "").lower()
-            # Simple word overlap score
-            text_words = set(text_lower.split())
-            mapping_words = set(mapping_text.split())
-            overlap = len(text_words & mapping_words)
-            
-            if overlap > 0:
-                scored_mappings.append((overlap, mapping))
-        
-        scored_mappings.sort(reverse=True, key=lambda x: x[0])
-        return [m[1] for m in scored_mappings[:top_k]]
-
+        """Retrieve similar historical mappings for few-shot examples (Legacy)"""
+        # This is being replaced by Semantic Clustering in MITREMapper
+        pass
 
 # Cell 4: MITREMapper Class
 class MITREMapper:
@@ -234,12 +218,15 @@ class MITREMapper:
         print("Loading sentence transformer for embeddings...")
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
         
-        # Create technique embeddings for semantic search
+        # Create technique embeddings for semantic search and hybrid TF-IDF search
         self._create_technique_embeddings()
+        
+        # Create historical mapping embeddings for few-shot learning
+        self._create_mapping_embeddings()
     
     def _create_technique_embeddings(self):
-        """Create embeddings for all MITRE techniques"""
-        print("Creating technique embeddings...")
+        """Create dense embeddings and TF-IDF vectors for Hybrid Search"""
+        print("Creating dense and sparse technique embeddings...")
         self.technique_texts = []
         self.technique_ids = []
         
@@ -248,18 +235,58 @@ class MITREMapper:
             self.technique_texts.append(text)
             self.technique_ids.append(tech_id)
         
+        # 1. Dense Embeddings
         self.technique_embeddings = self.embedder.encode(
             self.technique_texts,
             show_progress_bar=True
         )
+        
+        # 2. Sparse Vectors (Exact Match / TF-IDF)
+        self.tfidf_vectorizer = TfidfVectorizer(stop_words='english')
+        self.technique_tfidf = self.tfidf_vectorizer.fit_transform(self.technique_texts)
+
+    def _create_mapping_embeddings(self):
+        """Create dense embeddings for historical mappings for Few-Shot Selection"""
+        print("Creating historical mapping embeddings...")
+        self.mapping_texts = [m.get("text", "") for m in self.knowledge_base.historical_mappings]
+        
+        if self.mapping_texts:
+            self.mapping_embeddings = self.embedder.encode(
+                self.mapping_texts, 
+                show_progress_bar=False
+            )
+        else:
+            self.mapping_embeddings = np.array([])
     
     def _find_relevant_techniques(self, text: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """Find most relevant techniques using semantic similarity"""
+        """Find most relevant techniques using Hybrid Search (Dense + Sparse)"""
+        # 1. Semantic Search (Dense)
+        dense_query = self.embedder.encode([text])
+        dense_similarities = cosine_similarity(dense_query, self.technique_embeddings)[0]
+        
+        # 2. Exact Match Search (Sparse)
+        sparse_query = self.tfidf_vectorizer.transform([text])
+        sparse_similarities = cosine_similarity(sparse_query, self.technique_tfidf)[0]
+        
+        # 3. Hybrid Score = 70% Semantic + 30% Keyword Matching
+        hybrid_scores = (dense_similarities * 0.7) + (sparse_similarities * 0.3)
+        
+        top_indices = np.argsort(hybrid_scores)[-top_k:][::-1]
+        return [(self.technique_ids[i], float(hybrid_scores[i])) for i in top_indices]
+
+    def _find_similar_mappings(self, text: str, top_k: int = 3) -> List[Dict]:
+        """Find best few-shot examples using semantic search rather than word overlap"""
+        if not self.knowledge_base.historical_mappings or len(self.mapping_texts) == 0:
+            return []
+            
         query_embedding = self.embedder.encode([text])
-        similarities = cosine_similarity(query_embedding, self.technique_embeddings)[0]
+        similarities = cosine_similarity(query_embedding, self.mapping_embeddings)[0]
         
         top_indices = np.argsort(similarities)[-top_k:][::-1]
-        return [(self.technique_ids[i], float(similarities[i])) for i in top_indices]
+        
+        # Filter purely unrelated mappings (threshold > 0.15)
+        results = [self.knowledge_base.historical_mappings[i] for i in top_indices if similarities[i] > 0.15]
+        return results
     
     def _generate_with_llm(self, prompt: str, max_tokens: int = 2048) -> str:
         """Generate response from Llama model"""
@@ -325,8 +352,8 @@ Respond ONLY with valid JSON."""
     def _map_to_ttps(self, report: str, extracted_info: Dict) -> List[TTMapping]:
         """Map report to MITRE ATT&CK TTPs using hierarchical classification"""
         
-        # Get similar historical mappings for few-shot learning
-        similar_mappings = self.knowledge_base.get_similar_mappings(report, top_k=3)
+        # Get similar historical mappings using Dense Embeddings (Upgraded)
+        similar_mappings = self._find_similar_mappings(report, top_k=3)
         
         # Get relevant techniques using semantic search
         relevant_techniques = self._find_relevant_techniques(report, top_k=15)
