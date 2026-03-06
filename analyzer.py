@@ -1,5 +1,7 @@
 import json
 import re
+import os
+import pickle
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -224,9 +226,26 @@ class MITREMapper:
         # Create historical mapping embeddings for few-shot learning
         self._create_mapping_embeddings()
     
-    def _create_technique_embeddings(self):
-        """Create dense embeddings and TF-IDF vectors for Hybrid Search"""
-        print("Creating dense and sparse technique embeddings...")
+    def _create_technique_embeddings(self, cache_dir: str = "cache"):
+        """Create dense embeddings and TF-IDF vectors for Hybrid Search (with Disk Caching)"""
+        os.makedirs(cache_dir, exist_ok=True)
+        dense_path = os.path.join(cache_dir, "technique_dense.npy")
+        sparse_path = os.path.join(cache_dir, "technique_sparse.pkl")
+        vectorizer_path = os.path.join(cache_dir, "tfidf_vectorizer.pkl")
+        ids_path = os.path.join(cache_dir, "technique_ids.pkl")
+
+        if os.path.exists(dense_path) and os.path.exists(sparse_path):
+            print("⚡ Loading technique embeddings cache from disk (skipping computation)...")
+            self.technique_embeddings = np.load(dense_path)
+            with open(sparse_path, 'rb') as f:
+                self.technique_tfidf = pickle.load(f)
+            with open(vectorizer_path, 'rb') as f:
+                self.tfidf_vectorizer = pickle.load(f)
+            with open(ids_path, 'rb') as f:
+                self.technique_ids = pickle.load(f)
+            return
+
+        print("Creating dense and sparse technique embeddings for the first time...")
         self.technique_texts = []
         self.technique_ids = []
         
@@ -244,6 +263,15 @@ class MITREMapper:
         # 2. Sparse Vectors (Exact Match / TF-IDF)
         self.tfidf_vectorizer = TfidfVectorizer(stop_words='english')
         self.technique_tfidf = self.tfidf_vectorizer.fit_transform(self.technique_texts)
+
+        # Cache to disk for future runs
+        np.save(dense_path, self.technique_embeddings)
+        with open(sparse_path, 'wb') as f:
+            pickle.dump(self.technique_tfidf, f)
+        with open(vectorizer_path, 'wb') as f:
+            pickle.dump(self.tfidf_vectorizer, f)
+        with open(ids_path, 'wb') as f:
+            pickle.dump(self.technique_ids, f)
 
     def _create_mapping_embeddings(self):
         """Create dense embeddings for historical mappings for Few-Shot Selection"""

@@ -176,3 +176,5 @@ cython_debug/
 
 #pdf file 
 .pdf
+# Embedding Cache
+cache/
