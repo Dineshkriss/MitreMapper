@@ -623,7 +623,7 @@ if __name__ == "__main__":
         print(f"\n{i}. [{mitigation['attack_id']}] {mitigation['mitigation']}")
         print(f"   {mitigation['description']}")
     
-    print("\n--- ACTION PLAN: FOR INDIVIDUALS ---")
+    print("\n--- ACTION PLAN---")
     for i, action in enumerate(analysis.action_plan.for_individuals, 1):
         print(f"{i}. {action}")
     
