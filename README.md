@@ -16,4 +16,4 @@ To update the MITRE ATT&amp;CK matrices, run:
 - `python update.py --matrix [enterprise,mobile,ics]` = Updates one specified matrix.
 
 ## Hardware Requirements
-To run this locally, your system should atleast have 4GBs of VRAM and 16GBs of RAM.
+To run this locally, your system should atleast have 6GBs of VRAM and 16GBs of RAM.
